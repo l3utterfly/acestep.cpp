@@ -213,8 +213,20 @@ static void vae_ggml_load(VAEGGML * m, const char * path) {
     m->sb  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, 128);
     m->c2w = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, 7, 128, 2);
 
-    // Phase 2: allocate backend buffer
-    BackendPair bp = backend_init("VAE");
+    // Phase 2: allocate the decoder on a dedicated CPU backend. Its weight
+    // buffer exceeds the per-allocation limit on some mobile GPUs, so this is
+    // intentionally independent of GGML_BACKEND and the shared GPU backend.
+    ggml_backend_load_all();
+    int         n_threads = backend_cpu_n_threads();
+    BackendPair bp        = {};
+    bp.backend            = cpu_backend_new(n_threads);
+    if (!bp.backend) {
+        fprintf(stderr, "[VAE] FATAL: failed to initialize forced CPU backend\n");
+        exit(1);
+    }
+    bp.cpu_backend = bp.backend;
+    bp.has_gpu     = false;
+
     m->backend     = bp.backend;
     m->cpu_backend = bp.cpu_backend;
     m->sched       = backend_sched_new(bp, 8192);
@@ -223,6 +235,11 @@ static void vae_ggml_load(VAEGGML * m, const char * path) {
         fprintf(stderr, "[VAE] FATAL: failed to allocate weight buffer\n");
         exit(1);
     }
+    fprintf(stderr, "[Load] VAE backend: %s (forced, CPU threads: %d)\n", ggml_backend_name(m->backend), n_threads);
+#if defined(__ANDROID__)
+    __android_log_print(ANDROID_LOG_INFO, "AceStep", "Engine backend [VAE]: %s (forced CPU, CPU threads: %d)",
+                        ggml_backend_name(m->backend), n_threads);
+#endif
     fprintf(stderr, "[VAE] Backend: %s, Weight buffer: %.1f MB\n", ggml_backend_name(m->backend),
             (float) ggml_backend_buffer_get_size(m->buf) / (1024 * 1024));
 
@@ -580,6 +597,9 @@ static void vae_ggml_free(VAEGGML * m) {
     if (m->weight_ctx) {
         ggml_free(m->weight_ctx);
     }
-    backend_release(m->backend, m->cpu_backend);
+    // The VAE owns a standalone CPU backend rather than a shared backend ref.
+    if (m->backend) {
+        ggml_backend_free(m->backend);
+    }
     *m = {};
 }

@@ -56,7 +56,63 @@ endif()
 if(NOT DEFINED GGML_CUDA_GRAPHS)
     set(GGML_CUDA_GRAPHS_DEFAULT ON)
 endif()
+
+# Android's NDK provides OpenCL declarations neither as headers nor as a link
+# library. When the OpenCL backend is requested, build a private static Khronos
+# ICD loader and make it look like the system OpenCL package expected by ggml.
+# Keeping this provider here leaves the pinned ggml submodule unmodified.
+if(ANDROID AND GGML_OPENCL)
+    if(NOT ACESTEP_OPENCL_DEPS_ROOT)
+        message(FATAL_ERROR
+            "GGML_OPENCL on Android requires ACESTEP_OPENCL_DEPS_ROOT to contain "
+            "OpenCL-Headers and OpenCL-ICD-Loader")
+    endif()
+
+    set(ACESTEP_OPENCL_HEADERS_DIR "${ACESTEP_OPENCL_DEPS_ROOT}/OpenCL-Headers")
+    set(ACESTEP_OPENCL_LOADER_DIR  "${ACESTEP_OPENCL_DEPS_ROOT}/OpenCL-ICD-Loader")
+    if(NOT EXISTS "${ACESTEP_OPENCL_HEADERS_DIR}/CL/cl.h")
+        message(FATAL_ERROR "OpenCL headers not found under ${ACESTEP_OPENCL_HEADERS_DIR}")
+    endif()
+    if(NOT EXISTS "${ACESTEP_OPENCL_LOADER_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "OpenCL ICD loader not found under ${ACESTEP_OPENCL_LOADER_DIR}")
+    endif()
+
+    set(OPENCL_ICD_LOADER_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(OPENCL_ICD_LOADER_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(ENABLE_OPENCL_LAYERS OFF CACHE BOOL "" FORCE)
+    set(OPENCL_ICD_LOADER_HEADERS_DIR "${ACESTEP_OPENCL_HEADERS_DIR}" CACHE PATH "" FORCE)
+    add_subdirectory(
+        "${ACESTEP_OPENCL_LOADER_DIR}"
+        "${CMAKE_CURRENT_BINARY_DIR}/OpenCL-ICD-Loader")
+
+    # ggml calls find_package(OpenCL). Prefer our small provider module, which
+    # exposes the in-tree OpenCL target and headers through its expected legacy
+    # variables, before ggml appends its own CMake module directory.
+    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/android")
+
+    # The embedded-kernel generator runs on the build host. Avoid resolving a
+    # Python executable from the Android sysroot while cross-compiling.
+    if(NOT Python3_EXECUTABLE)
+        find_program(ACESTEP_HOST_PYTHON NAMES python3 python py NO_CMAKE_FIND_ROOT_PATH)
+        if(NOT ACESTEP_HOST_PYTHON)
+            message(FATAL_ERROR "A host Python interpreter is required to embed OpenCL kernels")
+        endif()
+        set(Python3_EXECUTABLE "${ACESTEP_HOST_PYTHON}" CACHE FILEPATH "Host Python interpreter" FORCE)
+    endif()
+endif()
+
 add_subdirectory(ggml)
+
+# The Android NDK has vulkan.h but not the Vulkan-Hpp C++ bindings used by
+# ggml-vulkan. Apply the platform customization from this parent project after
+# ggml creates the target, instead of patching ggml's CMakeLists.
+if(ANDROID AND TARGET ggml-vulkan)
+    if(NOT DEFINED ENV{VULKAN_SDK})
+        message(FATAL_ERROR "GGML_VULKAN on Android requires VULKAN_SDK for vulkan.hpp")
+    endif()
+    target_include_directories(ggml-vulkan PRIVATE "$ENV{VULKAN_SDK}/Include")
+    target_compile_definitions(ggml-vulkan PRIVATE VK_USE_PLATFORM_ANDROID_KHR)
+endif()
 
 # cpp-httplib (HTTP server library, used by ace-server)
 add_subdirectory(vendor/cpp-httplib)

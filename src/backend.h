@@ -12,6 +12,14 @@
 #include <cstring>
 #include <thread>
 
+// On Android, the engine's diagnostics (ggml log + the [Load] backend line) go to
+// stderr, which the platform discards -- so nothing about backend selection ever
+// reaches logcat. Mirror them to logcat so it is visible whether OpenCL actually
+// came up and which backend each stage ran on. Filter with: adb logcat -s AceStep-ggml:V AceStep:V
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
+
 struct BackendPair {
     ggml_backend_t backend;
     ggml_backend_t cpu_backend;
@@ -77,6 +85,10 @@ static void acestep_ggml_log(enum ggml_log_level level, const char * text, void 
     }
 
     fputs(text, stderr);
+#if defined(__ANDROID__)
+    // Surface ggml's own device-detection / OpenCL-init messages to logcat.
+    __android_log_write(ANDROID_LOG_INFO, "AceStep-ggml", text);
+#endif
     strncpy(last, text, sizeof(last) - 1);
     last[sizeof(last) - 1] = 0;
     count                  = 1;
@@ -97,6 +109,11 @@ static BackendPair backend_init(const char * label) {
     if (g_backend_refs > 0) {
         g_backend_refs++;
         fprintf(stderr, "[Load] %s backend: %s (shared)\n", label, ggml_backend_name(g_backend_cache.backend));
+#if defined(__ANDROID__)
+        __android_log_print(ANDROID_LOG_INFO, "AceStep", "Engine backend [%s]: %s (shared, %s)",
+                            label, ggml_backend_name(g_backend_cache.backend),
+                            g_backend_cache.has_gpu ? "GPU" : "CPU-only");
+#endif
         return g_backend_cache;
     }
 
@@ -138,6 +155,12 @@ static BackendPair backend_init(const char * label) {
     }
     bp.has_gpu = !best_is_cpu;
     fprintf(stderr, "[Load] %s backend: %s (CPU threads: %d)\n", label, ggml_backend_name(bp.backend), n_threads);
+#if defined(__ANDROID__)
+    // The decisive line: which backend this stage actually selected. "CPU" here
+    // (with useGpu on) means auto-best found no usable GPU and fell back.
+    __android_log_print(ANDROID_LOG_INFO, "AceStep", "Engine backend [%s]: %s (%s, CPU threads: %d)",
+                        label, ggml_backend_name(bp.backend), bp.has_gpu ? "GPU" : "CPU-only", n_threads);
+#endif
 
     g_backend_cache = bp;
     g_backend_refs  = 1;
