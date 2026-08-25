@@ -259,7 +259,7 @@ static bool dit_ggml_load(DiTGGML *    m,
                           float        adapter_scale = 1.0f) {
     // Backend init. flash_attn_ext accumulates in F16 on CPU, causing audible
     // drift over 24 layers x 8 steps: use F32 manual attention on CPU instead.
-    BackendPair bp    = backend_init("DiT");
+    BackendPair bp    = backend_init("DiT", true);
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->sched          = backend_sched_new(bp, 8192);
@@ -351,8 +351,13 @@ static bool dit_ggml_load(DiTGGML *    m,
 
         // Cross-attention: try full QKV, K+V fused, separate
         ly.cross_attn_norm = gf_load_tensor_f32(&m->wctx, gf, p + ".cross_attn_norm.weight");
-        ly.ca_qkv = gf_load_qkv_fused(&m->wctx, gf, p + ".cross_attn.q_proj.weight", p + ".cross_attn.k_proj.weight",
-                                      p + ".cross_attn.v_proj.weight");
+        // OpenCL stores quantized weights as separate SoA component buffers.
+        // Views into a fused QKV tensor cannot use the canonical AoS byte
+        // view_offs directly: each component needs its own translated offset,
+        // and Adreno's transposed representation also depends on the parent's
+        // row count. Keep Q separate and allow the existing K+V fusion below;
+        // neither projection then needs a weight view.
+        ly.ca_qkv = nullptr;
         if (!ly.ca_qkv) {
             ly.ca_q_proj = gf_load_tensor(&m->wctx, gf, p + ".cross_attn.q_proj.weight");
             // Try K+V fusion (same input enc, may share type)

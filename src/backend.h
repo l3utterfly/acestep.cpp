@@ -26,9 +26,16 @@ struct BackendPair {
     bool           has_gpu;
 };
 
-// Cached backend state (shared across all modules in the same binary)
-static BackendPair g_backend_cache = {};
-static int         g_backend_refs  = 0;
+// CPU-only stages and the DiT stage must not share a backend cache: otherwise
+// whichever stage loads first selects the backend (and weight location) for all
+// later stages. The accelerated pool is used only by DiT; every other stage
+// uses the CPU pool.
+struct BackendCache {
+    BackendPair pair;
+    int         refs;
+};
+
+static BackendCache g_backend_caches[2] = {};
 
 // Physical core count heuristic (logical / 2 for HT/SMT).
 // Used for GGML CPU thread count: GEMM shares SIMD units across hyperthreads,
@@ -95,46 +102,55 @@ static void acestep_ggml_log(enum ggml_log_level level, const char * text, void 
     fflush(stderr);
 }
 
-// Initialize backends: load all available (CUDA, Metal, Vulkan...),
-// pick the best one, keep CPU as fallback.
+// Initialize a real CPU backend, or (for DiT only) select the best available
+// accelerator and keep CPU as its scheduler fallback.
 // label: log prefix, e.g. "DiT", "VAE", "LM"
-// Subsequent calls reuse the same backend (single VMM pool).
-static BackendPair backend_init(const char * label) {
+// allow_gpu must be true only for DiT. GGML_BACKEND=CPU still forces DiT to CPU.
+static BackendPair backend_init(const char * label, bool allow_gpu) {
     static bool log_installed = false;
     if (!log_installed) {
         ggml_log_set(acestep_ggml_log, nullptr);
         log_installed = true;
     }
 
-    if (g_backend_refs > 0) {
-        g_backend_refs++;
-        fprintf(stderr, "[Load] %s backend: %s (shared)\n", label, ggml_backend_name(g_backend_cache.backend));
+    const char * force_backend = std::getenv("GGML_BACKEND");
+    const bool   use_gpu_pool  = allow_gpu && (!force_backend || strcmp(force_backend, "CPU") != 0);
+    BackendCache & cache       = g_backend_caches[use_gpu_pool ? 1 : 0];
+
+    if (cache.refs > 0) {
+        cache.refs++;
+        fprintf(stderr, "[Load] %s backend: %s (shared, %s)\n", label,
+                ggml_backend_name(cache.pair.backend), use_gpu_pool ? "DiT accelerator pool" : "CPU pool");
 #if defined(__ANDROID__)
         __android_log_print(ANDROID_LOG_INFO, "AceStep", "Engine backend [%s]: %s (shared, %s)",
-                            label, ggml_backend_name(g_backend_cache.backend),
-                            g_backend_cache.has_gpu ? "GPU" : "CPU-only");
+                            label, ggml_backend_name(cache.pair.backend),
+                            cache.pair.has_gpu ? "GPU" : "CPU-only");
 #endif
-        return g_backend_cache;
+        return cache.pair;
     }
 
     ggml_backend_load_all();
     BackendPair bp = {};
 
-    // GGML_BACKEND env var: force a specific device instead of auto-best.
-    // Device names: CUDA0, Vulkan0, CPU, BLAS (see ggml_backend_dev_name).
-    const char * force_backend = std::getenv("GGML_BACKEND");
-    if (force_backend) {
-        bp.backend = ggml_backend_init_by_name(force_backend, nullptr);
-        if (!bp.backend) {
-            fprintf(stderr, "[Load] FATAL: GGML_BACKEND=%s not found. Available:", force_backend);
-            for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
-                fprintf(stderr, " %s", ggml_backend_dev_name(ggml_backend_dev_get(i)));
-            }
-            fprintf(stderr, "\n");
-            exit(1);
-        }
+    if (!use_gpu_pool) {
+        bp.backend     = cpu_backend_new(backend_cpu_n_threads());
+        bp.cpu_backend = bp.backend;
     } else {
-        bp.backend = ggml_backend_init_best();
+        // GGML_BACKEND may force a specific accelerator for DiT. Device names:
+        // CUDA0, Vulkan0, etc. (see ggml_backend_dev_name).
+        if (force_backend) {
+            bp.backend = ggml_backend_init_by_name(force_backend, nullptr);
+            if (!bp.backend) {
+                fprintf(stderr, "[Load] FATAL: GGML_BACKEND=%s not found. Available:", force_backend);
+                for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+                    fprintf(stderr, " %s", ggml_backend_dev_name(ggml_backend_dev_get(i)));
+                }
+                fprintf(stderr, "\n");
+                exit(1);
+            }
+        } else {
+            bp.backend = ggml_backend_init_best();
+        }
     }
     if (!bp.backend) {
         fprintf(stderr, "[Load] FATAL: no backend available\n");
@@ -142,7 +158,9 @@ static BackendPair backend_init(const char * label) {
     }
     bool best_is_cpu = (strcmp(ggml_backend_name(bp.backend), "CPU") == 0);
     int  n_threads   = backend_cpu_n_threads();
-    if (best_is_cpu) {
+    if (!use_gpu_pool) {
+        // The configured standalone CPU backend is already ready.
+    } else if (best_is_cpu) {
         ggml_backend_free(bp.backend);
         bp.backend     = cpu_backend_new(n_threads);
         bp.cpu_backend = bp.backend;
@@ -156,31 +174,34 @@ static BackendPair backend_init(const char * label) {
     bp.has_gpu = !best_is_cpu;
     fprintf(stderr, "[Load] %s backend: %s (CPU threads: %d)\n", label, ggml_backend_name(bp.backend), n_threads);
 #if defined(__ANDROID__)
-    // The decisive line: which backend this stage actually selected. "CPU" here
-    // (with useGpu on) means auto-best found no usable GPU and fell back.
+    // The decisive line: non-DiT stages always report CPU; DiT reports the
+    // selected accelerator or CPU when disabled/unavailable.
     __android_log_print(ANDROID_LOG_INFO, "AceStep", "Engine backend [%s]: %s (%s, CPU threads: %d)",
                         label, ggml_backend_name(bp.backend), bp.has_gpu ? "GPU" : "CPU-only", n_threads);
 #endif
 
-    g_backend_cache = bp;
-    g_backend_refs  = 1;
+    cache.pair = bp;
+    cache.refs = 1;
     return bp;
 }
 
 // Release a backend reference. Frees GPU + CPU backends when refcount hits 0.
 static void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) {
-    if (g_backend_refs <= 0) {
+    for (BackendCache & cache : g_backend_caches) {
+        if (cache.refs <= 0 || cache.pair.backend != backend || cache.pair.cpu_backend != cpu_backend) {
+            continue;
+        }
+        cache.refs--;
+        if (cache.refs == 0) {
+            if (backend && backend != cpu_backend) {
+                ggml_backend_free(backend);
+            }
+            if (cpu_backend) {
+                ggml_backend_free(cpu_backend);
+            }
+            cache.pair = {};
+        }
         return;
-    }
-    g_backend_refs--;
-    if (g_backend_refs == 0) {
-        if (backend && backend != cpu_backend) {
-            ggml_backend_free(backend);
-        }
-        if (cpu_backend) {
-            ggml_backend_free(cpu_backend);
-        }
-        g_backend_cache = {};
     }
 }
 

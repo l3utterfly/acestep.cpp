@@ -64,7 +64,7 @@ static int fsq_encode_index(const float * raw_vals) {
 
 // Load tokenizer weights from DiT GGUF
 static bool tok_ggml_load(TokGGML * m, const char * gguf_path) {
-    BackendPair bp    = backend_init("Tokenizer");
+    BackendPair bp    = backend_init("Tokenizer", false);
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->use_flash_attn = bp.has_gpu;

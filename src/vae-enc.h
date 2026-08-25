@@ -105,7 +105,7 @@ static void vae_enc_load(VAEEncoder * m, const char * path) {
     m->c2b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 128);
 
     // Phase 2: allocate backend buffer
-    BackendPair bp = backend_init("VAE-Enc");
+    BackendPair bp = backend_init("VAE-Enc", false);
     m->backend     = bp.backend;
     m->cpu_backend = bp.cpu_backend;
     m->sched       = backend_sched_new(bp, 8192);

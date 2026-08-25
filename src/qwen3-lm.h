@@ -199,7 +199,7 @@ static Qwen3LMConfig qw3lm_load_config(const GGUFModel & gf) {
 
 // Init backend (same pattern as qwen3.h)
 static void qw3lm_init_backend(Qwen3LM * m) {
-    BackendPair bp    = backend_init("LM");
+    BackendPair bp    = backend_init("LM", false);
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->sched          = backend_sched_new(bp, 8192);

@@ -318,7 +318,7 @@ static void qwen3_load_layer(WeightCtx *         wctx,
 // gguf_path: path to the .gguf file
 static bool qwen3_load_text_encoder(Qwen3GGML * m, const char * gguf_path) {
     // Backend init
-    BackendPair bp    = backend_init("TextEncoder");
+    BackendPair bp    = backend_init("TextEncoder", false);
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->sched          = backend_sched_new(bp, 4096);

@@ -69,7 +69,7 @@ struct DetokGGML {
 static bool detok_ggml_load(DetokGGML * m, const char * gguf_path) {
     m->cfg = detok_config();
 
-    BackendPair bp    = backend_init("Detokenizer");
+    BackendPair bp    = backend_init("Detokenizer", false);
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->use_flash_attn = bp.has_gpu;
