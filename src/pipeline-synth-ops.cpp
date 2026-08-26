@@ -192,9 +192,9 @@ void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
             return;
         }
         ModelHandle tok_guard(ctx->store, tok);
-        if (!ctx->params.use_fa) {
-            tok->use_flash_attn = false;
-        }
+        // Flash attention is authoritative user config: honor use_fa in both
+        // directions, independent of the backend (GPU/CPU).
+        tok->use_flash_attn = ctx->params.use_fa;
 
         T_5Hz_actual =
             tok_ggml_encode(tok, s.cover_latents.data(), s.T_cover, codes.data(), ctx->meta->silence_full.data());
@@ -214,9 +214,8 @@ void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
             return;
         }
         ModelHandle detok_guard(ctx->store, detok);
-        if (!ctx->params.use_fa) {
-            detok->use_flash_attn = false;
-        }
+        // Flash attention is authoritative user config (see note above).
+        detok->use_flash_attn = ctx->params.use_fa;
 
         ret = detok_ggml_decode(detok, codes.data(), T_5Hz_actual, rt_latents.data());
     }
@@ -458,9 +457,8 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
             return -1;
         }
         ModelHandle te_guard(ctx->store, te);
-        if (!ctx->params.use_fa) {
-            te->use_flash_attn = false;
-        }
+        // Flash attention is authoritative user config (see note above).
+        te->use_flash_attn = ctx->params.use_fa;
 
         H_text = te->cfg.hidden_size;
 
@@ -520,9 +518,8 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
             return -1;
         }
         ModelHandle ce_guard(ctx->store, ce);
-        if (!ctx->params.use_fa) {
-            ce->use_flash_attn = false;
-        }
+        // Flash attention is authoritative user config (see note above).
+        ce->use_flash_attn = ctx->params.use_fa;
         ce->clamp_fp16 = ctx->params.clamp_fp16;
 
         H_cond = ce->lyric_cfg.hidden_size;
@@ -675,9 +672,8 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
                 return -1;
             }
             ModelHandle detok_guard(ctx->store, detok);
-            if (!ctx->params.use_fa) {
-                detok->use_flash_attn = false;
-            }
+            // Flash attention is authoritative user config (see note above).
+            detok->use_flash_attn = ctx->params.use_fa;
 
             for (int b = 0; b < batch_n; b++) {
                 const std::vector<int> & codes_b = s.per_codes[b];
@@ -832,9 +828,11 @@ int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, bool (*c
         return -1;
     }
     ModelHandle dit_guard(ctx->store, dit);
-    if (!ctx->params.use_fa) {
-        dit->use_flash_attn = false;
-    }
+    // Flash attention is authoritative user config: honor use_fa in both
+    // directions, independent of the backend. Note: on CPU, flash_attn_ext
+    // accumulates in F16 and drifts audibly over the DiT stack, so enabling it
+    // on a CPU run trades quality for speed.
+    dit->use_flash_attn = ctx->params.use_fa;
 
     s.timer.reset();
     int dit_rc = dit_ggml_generate(
