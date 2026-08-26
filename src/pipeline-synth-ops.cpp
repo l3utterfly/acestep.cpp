@@ -139,6 +139,7 @@ int ops_encode_src(const AceSynth * ctx,
         return 0;
     }
     if (src_audio && src_len > 0) {
+        ace_progress_report(ctx->progress, "Encoding source audio", 1, 1);
         s.timer.reset();
         int T_audio = src_len;
 
@@ -179,6 +180,7 @@ void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     if (!s.have_cover) {
         return;
     }
+    ace_progress_report(ctx->progress, "Analyzing source", 1, 1);
     s.timer.reset();
     int              T_5Hz = (s.T_cover + 4) / 5;
     std::vector<int> codes(T_5Hz);
@@ -360,6 +362,7 @@ void ops_encode_timbre(const AceSynth * ctx,
         return;
     }
     if (ref_audio && ref_len > 0) {
+        ace_progress_report(ctx->progress, "Encoding reference", 1, 1);
         s.timer.reset();
         VAEEncoder * ref_vae = store_require_vae_enc(ctx->store, ctx->vae_enc_key);
         if (!ref_vae) {
@@ -436,6 +439,8 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
         fprintf(stderr, "[Encode-Text] FATAL: instruction_str is empty (unknown task or orchestrator bug)\n");
         return -1;
     }
+
+    ace_progress_report(ctx->progress, "Encoding prompt", 1, 1);
 
     s.need_enc_switch = s.use_source_context && !s.is_repaint && !s.is_lego_region && s.rr.audio_cover_strength < 1.0f;
 
@@ -841,7 +846,8 @@ int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, bool (*c
         s.context_silence.empty() ? nullptr : s.context_silence.data(), s.cover_steps, cancel, cancel_data,
         s.per_enc_S.data(), s.enc_hidden_nc.empty() ? nullptr : s.enc_hidden_nc.data(),
         s.per_enc_S_nc_final.empty() ? nullptr : s.per_enc_S_nc_final.data(), s.seeds.data(), ctx->params.use_batch_cfg,
-        s.rr.dcw_scaler, s.rr.dcw_high_scaler, s.rr.dcw_mode.c_str(), s.rr.solver.c_str(), s.rr.stork_substeps);
+        s.rr.dcw_scaler, s.rr.dcw_high_scaler, s.rr.dcw_mode.c_str(), s.rr.solver.c_str(), s.rr.stork_substeps,
+        ctx->progress);
     if (dit_rc != 0) {
         return -1;
     }
@@ -902,7 +908,7 @@ int ops_vae_decode(const AceSynth * ctx,
 
         s.timer.reset();
         int T_audio = vae_ggml_decode_tiled(vae, dit_out, T_latent, audio.data(), T_audio_max, ctx->params.vae_chunk,
-                                            ctx->params.vae_overlap, cancel, cancel_data);
+                                            ctx->params.vae_overlap, cancel, cancel_data, ctx->progress);
         if (T_audio < 0) {
             if (cancel && cancel(cancel_data)) {
                 fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);

@@ -56,6 +56,7 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
     AceSynth * ctx = new AceSynth();
     ctx->store     = store;
     ctx->params    = *params;
+    ctx->progress  = nullptr;
 
     // DiTMeta: config + silence_latent + null_condition_emb + is_turbo,
     // fetched once, valid for the store lifetime. Avoids loading the DiT
@@ -686,6 +687,12 @@ void ace_audio_free(AceAudio * audio) {
         free(audio->samples);
         audio->samples   = NULL;
         audio->n_samples = 0;
+    }
+}
+
+void ace_synth_set_progress(AceSynth * ctx, const AceProgress * progress) {
+    if (ctx) {
+        ctx->progress = progress;
     }
 }
 

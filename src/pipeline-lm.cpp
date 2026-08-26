@@ -58,10 +58,16 @@ static std::vector<std::string> generate_phase1_batch(Qwen3LM *                 
                                                       const std::vector<std::vector<int>> * unconds           = nullptr,
                                                       bool                                  stop_at_reasoning = false,
                                                       bool (*cancel)(void *)                                  = nullptr,
-                                                      void * cancel_data = nullptr) {
+                                                      void *              cancel_data = nullptr,
+                                                      const AceProgress * progress    = nullptr) {
     int  N       = (int) prompts.size();
     int  V       = m->cfg.vocab_size;
     bool use_cfg = cfg_scale > 1.0f && unconds && !unconds->empty();
+
+    // One coarse tick for the text phase: the loop stops early on EOS, so a
+    // per-token bar against max_new_tokens would never fill. The label is what
+    // matters here; the audio-code phase carries the animated bar.
+    ace_progress_report(progress, lyrics_mode ? "Writing lyrics" : "Writing structure", 1, 1);
 
     // KV sets: cond [0..N-1], uncond [N..2N-1] if CFG
     for (int i = 0; i < N; i++) {
@@ -298,7 +304,8 @@ static std::vector<std::string> run_phase2_batch(Qwen3LM *                      
                                                  const char *                   negative_prompt,
                                                  bool                           use_batch_cfg,
                                                  bool (*cancel)(void *),
-                                                 void * cancel_data) {
+                                                 void *              cancel_data,
+                                                 const AceProgress * progress) {
     int  N       = (int) aces.size();
     int  V       = m->cfg.vocab_size;
     bool use_cfg = cfg_scale > 1.0f;
@@ -449,10 +456,18 @@ static std::vector<std::string> run_phase2_batch(Qwen3LM *                      
         }
     }
 
+    // Throttle progress so a long code decode (hundreds of tokens) does not
+    // flood the bridge: report every ~8 tokens plus the first. max_tokens is the
+    // duration-derived upper bound; the loop may stop earlier on EOS.
+    const int progress_stride = 8;
+
     for (int step = 0; step < max_tokens && n_active > 0; step++) {
         if (cancel && cancel(cancel_data)) {
             fprintf(stderr, "[LM-Phase2] Cancelled at step %d\n", step);
             return {};
+        }
+        if (progress && (step % progress_stride == 0)) {
+            ace_progress_report(progress, "Composing melody", step + 1, max_tokens);
         }
         int current_active = 0;
 
@@ -612,8 +627,9 @@ int ace_lm_generate(AceLm *            ctx,
                     const char *       dump_logits,
                     const char *       dump_tokens,
                     bool (*cancel)(void *),
-                    void * cancel_data,
-                    int    mode) {
+                    void *              cancel_data,
+                    int                 mode,
+                    const AceProgress * progress) {
     if (!ctx || !reqs || !out || n_req < 1) {
         return -1;
     }
@@ -814,7 +830,7 @@ int ace_lm_generate(AceLm *            ctx,
 
         auto phase1_texts = generate_phase1_batch(
             model, bpe, prompts, 2048, temperature, fill_top_p, fill_top_k, seeds, fsm_template ? &fsms : nullptr,
-            gen_lyrics, fill_cfg, unconds.empty() ? nullptr : &unconds, !gen_lyrics, cancel, cancel_data);
+            gen_lyrics, fill_cfg, unconds.empty() ? nullptr : &unconds, !gen_lyrics, cancel, cancel_data, progress);
         if (phase1_texts.empty()) {
             return -1;
         }
@@ -885,7 +901,7 @@ int ace_lm_generate(AceLm *            ctx,
                 mode == LM_MODE_INSPIRE ? "Inspire" : "Format");
     } else if (!user_has_codes) {
         batch_codes = run_phase2_batch(model, *bpe, aces, temperature, top_p, top_k, seeds, cfg_scale, neg_prompt,
-                                       ctx->params.use_batch_cfg, cancel, cancel_data);
+                                       ctx->params.use_batch_cfg, cancel, cancel_data, progress);
         if (batch_codes.empty()) {
             return -1;
         }

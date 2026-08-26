@@ -12,6 +12,7 @@
 #include "debug.h"
 #include "model-store.h"
 #include "pipeline-synth.h"
+#include "progress.h"
 #include "request.h"
 #include "timer.h"
 
@@ -30,6 +31,12 @@ struct AceSynth {
     // (always longer than AceSynth). Gives ops access to silence_full,
     // null_cond_cpu, is_turbo and the DiT config without loading the DiT.
     const DiTMeta * meta;
+
+    // Optional progress reporter, set via ace_synth_set_progress before a run.
+    // The pointee is owned by the caller and must outlive the run; NULL disables
+    // reporting. Ops read this to emit phase/step progress without threading a
+    // callback through every task and op signature.
+    const AceProgress * progress;
 
     // Derived constants mirrored for inline use in ops.
     int Oc;      // out_channels (64)

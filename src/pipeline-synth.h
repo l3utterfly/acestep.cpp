@@ -8,6 +8,7 @@
 // caches everything across calls. DiT weight swap between phases is an
 // invisible consequence of the store, not an orchestration concern anymore.
 
+#include "progress.h"
 #include "request.h"
 
 #include <cstdlib>
@@ -44,6 +45,13 @@ void ace_synth_default_params(AceSynthParams * p);
 // and T resolution can run before the DiT itself is ever loaded. All GPU
 // modules are acquired per op, never owned by the context. NULL on failure.
 AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
+
+// Attach (or clear, with NULL) a progress reporter for subsequent runs on this
+// context. The pointee must outlive every run that uses it. The reporter is
+// invoked from the calling thread at phase boundaries and, for the DiT and VAE
+// stages, once per denoise step / decode tile. Not thread-safe against a run in
+// flight; set it before ace_synth_job_run_dit / ace_synth_job_run_vae.
+void ace_synth_set_progress(AceSynth * ctx, const AceProgress * progress);
 
 // Phase 1: encode sources, build context, run all DiT denoising steps.
 // Modules are acquired as needed: VAE encoder for source and timbre, FSQ

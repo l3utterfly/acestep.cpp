@@ -12,6 +12,7 @@
 #include "ggml-backend.h"
 #include "ggml.h"
 #include "gguf-weights.h"
+#include "progress.h"
 
 #include <cmath>
 #include <cstdio>
@@ -489,15 +490,20 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
                                  int           chunk_size = 256,
                                  int           overlap    = 64,
                                  bool (*cancel)(void *)   = nullptr,
-                                 void * cancel_data       = nullptr) {
+                                 void * cancel_data       = nullptr,
+                                 const AceProgress * progress = nullptr) {
     // Ensure positive stride (matches Python effective_overlap reduction)
     while (chunk_size - 2 * overlap <= 0 && overlap > 0) {
         overlap /= 2;
     }
 
-    // Short sequence: decode directly
+    // Short sequence: decode directly (single, un-tiled pass -> one progress tick)
     if (T_latent <= chunk_size) {
-        return vae_ggml_decode(m, latent, T_latent, audio_out, max_T_audio);
+        int r = vae_ggml_decode(m, latent, T_latent, audio_out, max_T_audio);
+        if (r >= 0) {
+            ace_progress_report(progress, "Decoding audio", 1, 1);
+        }
+        return r;
     }
 
     int stride    = chunk_size - 2 * overlap;
@@ -570,6 +576,8 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
         ggml_backend_tensor_get(m->graph_output, audio_out + max_T_audio + audio_write_pos,
                                 (tile_T + trim_start) * sizeof(float), core_len * sizeof(float));
         audio_write_pos += core_len;
+
+        ace_progress_report(progress, "Decoding audio", i + 1, num_steps);
     }
 
     // Compact ch1 from offset max_T_audio to offset audio_write_pos
