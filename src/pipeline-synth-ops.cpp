@@ -827,7 +827,7 @@ void ops_init_noise(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
 }
 
 int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, bool (*cancel)(void *), void * cancel_data) {
-    DiTGGML * dit = store_require_dit(ctx->store, ctx->dit_key);
+    DiTGGML * dit = store_require_dit(ctx->store, ctx->dit_key, ctx->params.dit_use_gpu);
     if (!dit) {
         fprintf(stderr, "[DiT-Generate] FATAL: store_require_dit failed\n");
         return -1;

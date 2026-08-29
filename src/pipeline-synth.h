@@ -26,6 +26,7 @@ struct AceSynthParams {
     bool         use_fa;             // flash attention
     bool         clamp_fp16;         // clamp hidden states to FP16 range
     bool         use_batch_cfg;      // batch cond+uncond in one DiT forward
+    bool         dit_use_gpu;        // run DiT on the shared GPU pool (else CPU)
     int          vae_chunk;          // latent frames per tile
     int          vae_overlap;        // overlap frames per side
     bool         vae_use_gpu;        // run the VAE decoder on the shared GPU pool (else forced CPU)

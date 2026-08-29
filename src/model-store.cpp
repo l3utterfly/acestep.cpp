@@ -330,7 +330,7 @@ CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & k) {
     return m;
 }
 
-DiTGGML * store_require_dit(ModelStore * s, const ModelKey & k) {
+DiTGGML * store_require_dit(ModelStore * s, const ModelKey & k, bool use_gpu) {
     std::lock_guard<std::mutex> lock(s->mtx);
     if (auto * hit = cache_hit<DiTGGML>(s, k)) {
         return hit;
@@ -341,7 +341,7 @@ DiTGGML * store_require_dit(ModelStore * s, const ModelKey & k) {
     Timer        t;
     DiTGGML *    m       = new DiTGGML();
     const char * adapter = k.adapter_path.empty() ? nullptr : k.adapter_path.c_str();
-    if (!dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale)) {
+    if (!dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale, use_gpu)) {
         delete m;
         return nullptr;
     }

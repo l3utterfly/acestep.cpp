@@ -109,7 +109,7 @@ void         store_free(ModelStore * s);
 Qwen3LM *    store_require_lm(ModelStore * s, const ModelKey & k);
 Qwen3GGML *  store_require_text_enc(ModelStore * s, const ModelKey & k);
 CondGGML *   store_require_cond_enc(ModelStore * s, const ModelKey & k);
-DiTGGML *    store_require_dit(ModelStore * s, const ModelKey & k);
+DiTGGML *    store_require_dit(ModelStore * s, const ModelKey & k, bool use_gpu = true);
 VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & k);
 VAEGGML *    store_require_vae_dec(ModelStore * s, const ModelKey & k, bool allow_gpu = false);
 TokGGML *    store_require_fsq_tok(ModelStore * s, const ModelKey & k);

@@ -256,10 +256,11 @@ static struct ggml_tensor * dit_load_proj_out_w(WeightCtx *         wctx,
 static bool dit_ggml_load(DiTGGML *    m,
                           const char * gguf_path,
                           const char * adapter_path  = nullptr,
-                          float        adapter_scale = 1.0f) {
+                          float        adapter_scale = 1.0f,
+                          bool         use_gpu       = true) {
     // Backend init. flash_attn_ext accumulates in F16 on CPU, causing audible
     // drift over 24 layers x 8 steps: use F32 manual attention on CPU instead.
-    BackendPair bp    = backend_init("DiT", true);
+    BackendPair bp    = backend_init("DiT", use_gpu);
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->sched          = backend_sched_new(bp, 8192);

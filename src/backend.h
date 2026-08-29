@@ -102,11 +102,16 @@ static void acestep_ggml_log(enum ggml_log_level level, const char * text, void 
     fflush(stderr);
 }
 
-// Initialize a real CPU backend, or (for DiT only) select the best available
-// accelerator and keep CPU as its scheduler fallback.
-// label: log prefix, e.g. "DiT", "VAE", "LM"
-// allow_gpu must be true only for DiT. GGML_BACKEND=CPU still forces DiT to CPU.
-static BackendPair backend_init(const char * label, bool allow_gpu) {
+// Initialize a real CPU backend, or (when use_gpu is true) select the best
+// available accelerator and keep CPU as its scheduler fallback.
+// label:   log prefix, e.g. "DiT", "VAE", "LM"
+// use_gpu: run this module on the accelerator pool. Threaded from the caller's
+//          user flag; only DiT and the VAE decoder ever pass true (every other
+//          stage is CPU-only by policy).
+// GGML_BACKEND is now a developer override only: =CPU still forces even a
+// use_gpu=true module onto CPU, and =CUDA0/=Vulkan0/etc. picks a specific device
+// instead of ggml_backend_init_best(). It no longer gates GPU on/off.
+static BackendPair backend_init(const char * label, bool use_gpu) {
     static bool log_installed = false;
     if (!log_installed) {
         ggml_log_set(acestep_ggml_log, nullptr);
@@ -114,13 +119,14 @@ static BackendPair backend_init(const char * label, bool allow_gpu) {
     }
 
     const char * force_backend = std::getenv("GGML_BACKEND");
-    const bool   use_gpu_pool  = allow_gpu && (!force_backend || strcmp(force_backend, "CPU") != 0);
+    const bool   force_cpu     = force_backend && strcmp(force_backend, "CPU") == 0;
+    const bool   use_gpu_pool  = use_gpu && !force_cpu;
     BackendCache & cache       = g_backend_caches[use_gpu_pool ? 1 : 0];
 
     if (cache.refs > 0) {
         cache.refs++;
         fprintf(stderr, "[Load] %s backend: %s (shared, %s)\n", label,
-                ggml_backend_name(cache.pair.backend), use_gpu_pool ? "DiT accelerator pool" : "CPU pool");
+                ggml_backend_name(cache.pair.backend), use_gpu_pool ? "accelerator pool" : "CPU pool");
 #if defined(__ANDROID__)
         __android_log_print(ANDROID_LOG_INFO, "AceStep", "Engine backend [%s]: %s (shared, %s)",
                             label, ggml_backend_name(cache.pair.backend),
