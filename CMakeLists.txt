@@ -57,48 +57,18 @@ if(NOT DEFINED GGML_CUDA_GRAPHS)
     set(GGML_CUDA_GRAPHS_DEFAULT ON)
 endif()
 
-# Android's NDK provides OpenCL declarations neither as headers nor as a link
-# library. When the OpenCL backend is requested, build a private static Khronos
-# ICD loader and make it look like the system OpenCL package expected by ggml.
-# Keeping this provider here leaves the pinned ggml submodule unmodified.
-if(ANDROID AND GGML_OPENCL)
-    if(NOT ACESTEP_OPENCL_DEPS_ROOT)
-        message(FATAL_ERROR
-            "GGML_OPENCL on Android requires ACESTEP_OPENCL_DEPS_ROOT to contain "
-            "OpenCL-Headers and OpenCL-ICD-Loader")
+# Android OpenCL: the Khronos ICD loader (libOpenCL.so) and headers are
+# provisioned into the NDK sysroot by Layla's ace-step module (via the shared
+# setup-opencl-ndk prerun), so ggml's stock find_package(OpenCL) resolves them
+# directly — no in-tree ICD loader is built here. At runtime the loader is a
+# link stub; the device's vendor libOpenCL.so satisfies the DT_NEEDED. The
+# embedded-kernel generator still needs a HOST Python while cross-compiling.
+if(ANDROID AND GGML_OPENCL AND NOT Python3_EXECUTABLE)
+    find_program(ACESTEP_HOST_PYTHON NAMES python3 python py NO_CMAKE_FIND_ROOT_PATH)
+    if(NOT ACESTEP_HOST_PYTHON)
+        message(FATAL_ERROR "A host Python interpreter is required to embed OpenCL kernels")
     endif()
-
-    set(ACESTEP_OPENCL_HEADERS_DIR "${ACESTEP_OPENCL_DEPS_ROOT}/OpenCL-Headers")
-    set(ACESTEP_OPENCL_LOADER_DIR  "${ACESTEP_OPENCL_DEPS_ROOT}/OpenCL-ICD-Loader")
-    if(NOT EXISTS "${ACESTEP_OPENCL_HEADERS_DIR}/CL/cl.h")
-        message(FATAL_ERROR "OpenCL headers not found under ${ACESTEP_OPENCL_HEADERS_DIR}")
-    endif()
-    if(NOT EXISTS "${ACESTEP_OPENCL_LOADER_DIR}/CMakeLists.txt")
-        message(FATAL_ERROR "OpenCL ICD loader not found under ${ACESTEP_OPENCL_LOADER_DIR}")
-    endif()
-
-    set(OPENCL_ICD_LOADER_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(OPENCL_ICD_LOADER_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    set(ENABLE_OPENCL_LAYERS OFF CACHE BOOL "" FORCE)
-    set(OPENCL_ICD_LOADER_HEADERS_DIR "${ACESTEP_OPENCL_HEADERS_DIR}" CACHE PATH "" FORCE)
-    add_subdirectory(
-        "${ACESTEP_OPENCL_LOADER_DIR}"
-        "${CMAKE_CURRENT_BINARY_DIR}/OpenCL-ICD-Loader")
-
-    # ggml calls find_package(OpenCL). Prefer our small provider module, which
-    # exposes the in-tree OpenCL target and headers through its expected legacy
-    # variables, before ggml appends its own CMake module directory.
-    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/android")
-
-    # The embedded-kernel generator runs on the build host. Avoid resolving a
-    # Python executable from the Android sysroot while cross-compiling.
-    if(NOT Python3_EXECUTABLE)
-        find_program(ACESTEP_HOST_PYTHON NAMES python3 python py NO_CMAKE_FIND_ROOT_PATH)
-        if(NOT ACESTEP_HOST_PYTHON)
-            message(FATAL_ERROR "A host Python interpreter is required to embed OpenCL kernels")
-        endif()
-        set(Python3_EXECUTABLE "${ACESTEP_HOST_PYTHON}" CACHE FILEPATH "Host Python interpreter" FORCE)
-    endif()
+    set(Python3_EXECUTABLE "${ACESTEP_HOST_PYTHON}" CACHE FILEPATH "Host Python interpreter" FORCE)
 endif()
 
 add_subdirectory(ggml)
@@ -176,6 +146,13 @@ add_library(acestep-core STATIC
 )
 target_link_libraries(acestep-core PUBLIC yyjson)
 link_ggml_backends(acestep-core)
+
+# Layla self-contained C-ABI bindings (isolated under layla/ for easy upstream
+# merges). Enabled by Layla's ace-step module; produces libacestep-layla.a, which
+# Layla whole-archives into a standalone libacestep_engine.so.
+if(ACESTEP_BUILD_LAYLA_BINDINGS)
+    add_subdirectory(layla)
+endif()
 
 # ace-synth: full pipeline (text-enc + cond + dit + vae + wav)
 add_executable(ace-synth tools/ace-synth.cpp)
