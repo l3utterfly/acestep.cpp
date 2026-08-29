@@ -253,6 +253,7 @@ extern "C" acestep_status acestep_run_synth(
     const char *output_path,
     bool use_flash_attn,
     int vae_tile_size,
+    bool use_gpu,
     acestep_progress_cb progress, void *progress_ctx,
     acestep_stop_cb stop, void *stop_ctx,
     char **result, char **error) {
@@ -296,7 +297,14 @@ extern "C" acestep_status acestep_run_synth(
     params.adapter_scale = req.adapter_scale;
     params.use_fa = use_flash_attn;
     if (vae_tile_size > 0) params.vae_chunk = vae_tile_size;
-    ACE_LOGI("Synth: flash_attn=%s, vae_tile=%d", params.use_fa ? "on" : "off", params.vae_chunk);
+    params.vae_use_gpu = use_gpu;
+    // On GPU the VAE decoder's activation buffers must stay within mobile GPU
+    // per-allocation limits, so cap the tile at 256 latent frames.
+    if (use_gpu && params.vae_chunk > 256) params.vae_chunk = 256;
+    // Overlap is always 1/16 of the VAE tile size (kept in lockstep with the tile).
+    params.vae_overlap = params.vae_chunk / 16;
+    ACE_LOGI("Synth: flash_attn=%s, vae_gpu=%s, vae_tile=%d, vae_overlap=%d", params.use_fa ? "on" : "off",
+             params.vae_use_gpu ? "on" : "off", params.vae_chunk, params.vae_overlap);
 
     store = store_create(EVICT_STRICT);
     if (!store) return err("Failed to create model store", error);

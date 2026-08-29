@@ -28,6 +28,7 @@ struct AceSynthParams {
     bool         use_batch_cfg;      // batch cond+uncond in one DiT forward
     int          vae_chunk;          // latent frames per tile
     int          vae_overlap;        // overlap frames per side
+    bool         vae_use_gpu;        // run the VAE decoder on the shared GPU pool (else forced CPU)
     const char * dump_dir;           // intermediate tensor dump dir (NULL = disabled)
 };
 

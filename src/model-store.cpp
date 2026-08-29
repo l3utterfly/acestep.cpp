@@ -366,7 +366,7 @@ VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & k) {
     return m;
 }
 
-VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & k) {
+VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & k, bool allow_gpu) {
     std::lock_guard<std::mutex> lock(s->mtx);
     if (auto * hit = cache_hit<VAEGGML>(s, k)) {
         return hit;
@@ -376,7 +376,7 @@ VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & k) {
     }
     Timer     t;
     VAEGGML * m = new VAEGGML();
-    vae_ggml_load(m, k.path.c_str());  // exit(1) on failure, returns void
+    vae_ggml_load(m, k.path.c_str(), allow_gpu);  // exit(1) on failure, returns void
     install_entry(s, k, m, bytes_of_vae_dec(m), "VAE-Dec", del_vae_dec);
     fprintf(stderr, "[Store] Load VAE-Dec: %.0f ms\n", t.ms());
     return m;

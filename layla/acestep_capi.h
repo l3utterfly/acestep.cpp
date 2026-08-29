@@ -64,6 +64,10 @@ ACESTEP_CAPI_EXPORT acestep_status acestep_run_lm(
 
 // Runs Text-Encoder + DiT + VAE for one request, writes audio to output_path,
 // and returns a JSON metadata body. Callback/out-pointer contract as above.
+// use_gpu: when true the VAE decoder joins the shared accelerator pool (GPU) and
+//   the VAE tile size is capped at 256 (overlap tracks it at 1/16); when false the
+//   decoder stays on a dedicated CPU backend. DiT GPU selection is still governed
+//   by the GGML_BACKEND env var set by the caller.
 ACESTEP_CAPI_EXPORT acestep_status acestep_run_synth(
     const char *text_encoder_path,
     const char *dit_path,
@@ -72,6 +76,7 @@ ACESTEP_CAPI_EXPORT acestep_status acestep_run_synth(
     const char *output_path,
     bool use_flash_attn,
     int vae_tile_size,
+    bool use_gpu,
     acestep_progress_cb progress, void *progress_ctx,
     acestep_stop_cb stop, void *stop_ctx,
     char **result, char **error);

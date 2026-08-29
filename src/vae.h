@@ -45,6 +45,7 @@ struct VAEGGML {
     ggml_backend_t        cpu_backend;
     ggml_backend_sched_t  sched;
     ggml_backend_buffer_t buf;
+    bool                  backend_shared;  // true: backend came from the shared pool (backend_init), release via backend_release
     struct ggml_context * weight_ctx;  // holds weight tensor metadata
 
     // Graph cache for tiled decode (avoids rebuild per tile)
@@ -164,8 +165,15 @@ static void vae_load_bias(struct ggml_tensor * dst, const GGUFModel & gf, const 
     ggml_backend_tensor_set(dst, d.data(), 0, C * sizeof(float));
 }
 
-// Load model
-static void vae_ggml_load(VAEGGML * m, const char * path) {
+// Load model.
+// allow_gpu == false (default): the decoder is pinned to a dedicated, standalone
+//   CPU backend, independent of GGML_BACKEND and the shared GPU pool. This is the
+//   historical behaviour and the safe choice on mobile GPUs whose per-allocation
+//   limit the decoder weight buffer can exceed.
+// allow_gpu == true: the decoder joins the shared accelerator pool via
+//   backend_init("VAE", true), so it runs on the GPU whenever GGML_BACKEND allows
+//   (i.e. the app requested useGpu); it still falls back to CPU otherwise.
+static void vae_ggml_load(VAEGGML * m, const char * path, bool allow_gpu = false) {
     GGUFModel gf = {};
     if (!gf_load(&gf, path)) {
         fprintf(stderr, "[VAE] FATAL: cannot load %s\n", path);
@@ -214,19 +222,28 @@ static void vae_ggml_load(VAEGGML * m, const char * path) {
     m->sb  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, 128);
     m->c2w = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, 7, 128, 2);
 
-    // Phase 2: allocate the decoder on a dedicated CPU backend. Its weight
-    // buffer exceeds the per-allocation limit on some mobile GPUs, so this is
-    // intentionally independent of GGML_BACKEND and the shared GPU backend.
+    // Phase 2: allocate the decoder backend.
     ggml_backend_load_all();
     int         n_threads = backend_cpu_n_threads();
     BackendPair bp        = {};
-    bp.backend            = cpu_backend_new(n_threads);
-    if (!bp.backend) {
-        fprintf(stderr, "[VAE] FATAL: failed to initialize forced CPU backend\n");
-        exit(1);
+    if (allow_gpu) {
+        // Join the shared accelerator pool. Runs on GPU when GGML_BACKEND permits
+        // (useGpu requested), CPU otherwise. Released via backend_release.
+        bp                = backend_init("VAE", true);
+        m->backend_shared = true;
+    } else {
+        // Dedicated, standalone CPU backend. Its weight buffer exceeds the
+        // per-allocation limit on some mobile GPUs, so this is intentionally
+        // independent of GGML_BACKEND and the shared GPU backend.
+        bp.backend        = cpu_backend_new(n_threads);
+        if (!bp.backend) {
+            fprintf(stderr, "[VAE] FATAL: failed to initialize forced CPU backend\n");
+            exit(1);
+        }
+        bp.cpu_backend    = bp.backend;
+        bp.has_gpu        = false;
+        m->backend_shared = false;
     }
-    bp.cpu_backend = bp.backend;
-    bp.has_gpu     = false;
 
     m->backend     = bp.backend;
     m->cpu_backend = bp.cpu_backend;
@@ -236,10 +253,11 @@ static void vae_ggml_load(VAEGGML * m, const char * path) {
         fprintf(stderr, "[VAE] FATAL: failed to allocate weight buffer\n");
         exit(1);
     }
-    fprintf(stderr, "[Load] VAE backend: %s (forced, CPU threads: %d)\n", ggml_backend_name(m->backend), n_threads);
+    fprintf(stderr, "[Load] VAE backend: %s (%s, CPU threads: %d)\n", ggml_backend_name(m->backend),
+            bp.has_gpu ? "GPU" : "forced CPU", n_threads);
 #if defined(__ANDROID__)
-    __android_log_print(ANDROID_LOG_INFO, "AceStep", "Engine backend [VAE]: %s (forced CPU, CPU threads: %d)",
-                        ggml_backend_name(m->backend), n_threads);
+    __android_log_print(ANDROID_LOG_INFO, "AceStep", "Engine backend [VAE]: %s (%s, CPU threads: %d)",
+                        ggml_backend_name(m->backend), bp.has_gpu ? "GPU" : "forced CPU", n_threads);
 #endif
     fprintf(stderr, "[VAE] Backend: %s, Weight buffer: %.1f MB\n", ggml_backend_name(m->backend),
             (float) ggml_backend_buffer_get_size(m->buf) / (1024 * 1024));
@@ -605,8 +623,11 @@ static void vae_ggml_free(VAEGGML * m) {
     if (m->weight_ctx) {
         ggml_free(m->weight_ctx);
     }
-    // The VAE owns a standalone CPU backend rather than a shared backend ref.
-    if (m->backend) {
+    // Standalone CPU backend is owned outright; a shared-pool backend is a
+    // refcounted reference and must go back through backend_release.
+    if (m->backend_shared) {
+        backend_release(m->backend, m->cpu_backend);
+    } else if (m->backend) {
         ggml_backend_free(m->backend);
     }
     *m = {};

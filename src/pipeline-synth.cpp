@@ -32,6 +32,7 @@ void ace_synth_default_params(AceSynthParams * p) {
     p->use_batch_cfg     = true;
     p->vae_chunk         = 1024;
     p->vae_overlap       = 64;
+    p->vae_use_gpu       = false;
     p->dump_dir          = NULL;
 }
 

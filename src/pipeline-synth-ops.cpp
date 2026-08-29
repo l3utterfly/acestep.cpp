@@ -874,7 +874,7 @@ int ops_vae_decode(const AceSynth * ctx,
                    SynthState &     s,
                    bool (*cancel)(void *),
                    void * cancel_data) {
-    VAEGGML * vae = store_require_vae_dec(ctx->store, ctx->vae_dec_key);
+    VAEGGML * vae = store_require_vae_dec(ctx->store, ctx->vae_dec_key, ctx->params.vae_use_gpu);
     if (!vae) {
         fprintf(stderr, "[VAE-Decode] FATAL: store_require_vae_dec failed\n");
         return -1;
