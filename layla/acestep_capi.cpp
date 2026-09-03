@@ -370,6 +370,7 @@ extern "C" acestep_status acestep_run_synth(
     bool use_flash_attn,
     int vae_tile_size,
     bool use_gpu,
+    bool vae_use_gpu,
     acestep_progress_cb progress, void *progress_ctx,
     acestep_stop_cb stop, void *stop_ctx,
     char **result, char **error) {
@@ -413,13 +414,9 @@ extern "C" acestep_status acestep_run_synth(
     params.adapter_scale = req.adapter_scale;
     params.use_fa = use_flash_attn;
     if (vae_tile_size > 0) params.vae_chunk = vae_tile_size;
-    // DiT follows the user's GPU flag directly (threaded to backend_init).
+    // Both GPU flags are honored verbatim -- the caller decides which stages run
+    // on the accelerator; this layer only threads the decision to the loaders.
     params.dit_use_gpu = use_gpu;
-    // GPU VAE is currently slower than CPU, so force the decoder onto the CPU
-    // regardless of the caller's use_gpu request. The full GPU path (backend
-    // selection + 256 tile cap) is retained below and reachable by flipping this
-    // back to `use_gpu` once GPU VAE is worth enabling.
-    const bool vae_use_gpu = false;
     params.vae_use_gpu = vae_use_gpu;
     // On GPU the VAE decoder's activation buffers must stay within mobile GPU
     // per-allocation limits, so cap the tile at 256 latent frames.
@@ -867,12 +864,9 @@ extern "C" acestep_status acestep_run_vae_decode(
     }
 
     const auto t_total = ace_clock::now();
-    // GPU VAE is currently slower than CPU, so the decoder is forced onto the CPU
-    // regardless of the caller's request -- the same override acestep_run_synth
-    // applies. The GPU path (backend selection + 256-frame tile cap) stays wired
-    // and is reachable by flipping this back to `use_gpu`.
-    const bool vae_use_gpu = false;
-    (void) use_gpu;
+    // Honored verbatim: this entry point only decodes, so use_gpu *is* the VAE
+    // flag. The caller decides whether GPU decode is worth it on its platform.
+    const bool vae_use_gpu = use_gpu;
     int vae_chunk = 0, vae_overlap = 0;
     resolve_vae_tiles(vae_tile_size, vae_use_gpu, &vae_chunk, &vae_overlap);
     ACE_LOGI("VAE-Decode: start (%d latent frames, format=%s, vae_gpu=%s, vae_tile=%d, vae_overlap=%d)",

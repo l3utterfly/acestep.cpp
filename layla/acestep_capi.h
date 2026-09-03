@@ -64,12 +64,14 @@ ACESTEP_CAPI_EXPORT acestep_status acestep_run_lm(
 
 // Runs Text-Encoder + DiT + VAE for one request, writes audio to output_path,
 // and returns a JSON metadata body. Callback/out-pointer contract as above.
-// use_gpu: threaded directly to the engine's DiT loader -- true runs DiT on the
-//   accelerator pool (GPU, CPU fallback), false runs it on CPU. The VAE decoder
-//   has a GPU path wired to this flag too, but is currently forced to CPU inside
-//   the implementation because GPU VAE is slower. An externally-exported
-//   GGML_BACKEND remains a developer-only override (=CPU forces CPU; =CUDA0/
-//   =Vulkan0/etc. pins a device).
+// use_gpu:     threaded directly to the engine's DiT loader -- true runs DiT on
+//   the accelerator pool (GPU, CPU fallback), false runs it on CPU.
+// vae_use_gpu: the same choice for the VAE decoder, as its own input because the
+//   two stages are worth accelerating independently (a GPU that wins on DiT can
+//   lose on VAE decode). Both flags are honored verbatim: this ABI has no
+//   platform or performance policy of its own -- the caller decides.
+// An externally exported GGML_BACKEND remains a developer-only override
+// (=CPU forces CPU; =CUDA0/=Vulkan0/etc. pins a device).
 ACESTEP_CAPI_EXPORT acestep_status acestep_run_synth(
     const char *text_encoder_path,
     const char *dit_path,
@@ -79,6 +81,7 @@ ACESTEP_CAPI_EXPORT acestep_status acestep_run_synth(
     bool use_flash_attn,
     int vae_tile_size,
     bool use_gpu,
+    bool vae_use_gpu,
     acestep_progress_cb progress, void *progress_ctx,
     acestep_stop_cb stop, void *stop_ctx,
     char **result, char **error);
@@ -146,8 +149,8 @@ ACESTEP_CAPI_EXPORT acestep_status acestep_run_vae_encode(
 // plus mp3_bitrate and peak_clip from request_json. Returns a JSON object body:
 //   { "outputPath": "...", "sampleRate": 48000, "numSamples": N,
 //     "durationSeconds": D }
-// use_gpu: as in acestep_run_synth, the VAE decoder is pinned to CPU inside the
-// implementation because GPU VAE is currently slower; the GPU path stays wired.
+// use_gpu: this entry point only decodes, so the flag *is* the VAE decoder's
+// backend choice, and it is honored verbatim (see acestep_run_synth).
 ACESTEP_CAPI_EXPORT acestep_status acestep_run_vae_decode(
     const char *vae_path,
     const char *request_json,
